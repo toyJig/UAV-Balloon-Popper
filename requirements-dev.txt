@@ -1,0 +1,8 @@
+# Dependencies for developing/testing on a laptop (Windows/Linux/Mac).
+# Hardware-specific packages (picamera2, ncnn) are NOT listed here because
+# they only install on Raspberry Pi OS / Linux ARM. See requirements-pi.txt.
+pytest>=8.0
+numpy>=1.26
+opencv-python-headless>=4.9
+pyserial>=3.5
+pyyaml>=6.0

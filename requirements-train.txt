@@ -1,0 +1,11 @@
+# Dataset building + training on a laptop/desktop with an NVIDIA GPU.
+# Install PyTorch with CUDA FIRST, from the PyTorch index (pick the CUDA
+# build your driver supports; cu130 needs NVIDIA driver >= 580):
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+#
+# then:
+#   pip install -r requirements-dev.txt -r requirements-train.txt
+ultralytics>=8.3
+huggingface_hub[hf_xet]>=0.30   # Seraphim drone dataset download
+transformers>=5.0               # CLIP hot-air-balloon filter (tools/filter_hot_air_balloons.py)

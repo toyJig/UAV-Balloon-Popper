@@ -1,0 +1,20 @@
+# Dependencies to install ON the Raspberry Pi 5 (Raspberry Pi OS, 64-bit).
+# Install system packages first (libcamera/picamera2 ship as apt packages,
+# not reliably via pip):
+#
+#   sudo apt update
+#   sudo apt install -y python3-picamera2 python3-opencv python3-numpy python3-pip
+#
+# Then, inside a venv created with --system-site-packages (so picamera2 and
+# the apt-installed opencv/numpy are visible):
+#
+#   python3 -m venv --system-site-packages ~/lockon-venv
+#   source ~/lockon-venv/bin/activate
+#   pip install -r requirements-pi.txt
+#
+pyserial>=3.5
+ncnn>=1.0.20240410      # inference runtime (src/lockon/vision/ncnn_backend.py)
+pyyaml>=6.0             # reads the exported model's metadata.yaml (input size, class names)
+# ultralytics is NOT needed on the Pi: training and NCNN export happen on the
+# laptop (tools/train_yolo.py, tools/export_ncnn.py), and the Pi runs the
+# exported model with ncnn directly. Installing it would pull in PyTorch.
