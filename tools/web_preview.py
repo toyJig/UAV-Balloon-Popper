@@ -20,58 +20,25 @@ Endpoints:  /  (viewer page)   /stream.mjpg  (raw MJPEG)   /snapshot.jpg
 from __future__ import annotations
 
 import argparse
-import socket
-import subprocess
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import cv2
-import numpy as np
 
 from lockon.vision.capture import CameraCapture
 from lockon.vision.fallback_detector import ColorMotionDetector
 from lockon.vision.hybrid import HybridDetector
+from lockon.vision.mjpeg import FrameHub, serve
 from lockon.vision.types import DetectionSource
 
 COLOR_BY_SOURCE = {
     DetectionSource.ML: (0, 255, 0),          # green (BGR)
     DetectionSource.FALLBACK: (0, 165, 255),  # orange
 }
-
-
-class FrameHub:
-    """Holds the most recent JPEG; readers wait for the next one."""
-
-    def __init__(self) -> None:
-        self._jpeg = b""
-        self._seq = 0
-        self._cv = threading.Condition()
-        self.stopped = False
-
-    def publish(self, jpeg: bytes) -> None:
-        with self._cv:
-            self._jpeg = jpeg
-            self._seq += 1
-            self._cv.notify_all()
-
-    def latest(self) -> bytes:
-        with self._cv:
-            return self._jpeg
-
-    def wait_next(self, last_seq: int, timeout: float = 5.0):
-        with self._cv:
-            self._cv.wait_for(lambda: self._seq != last_seq or self.stopped, timeout=timeout)
-            return self._jpeg, self._seq
-
-    def stop(self) -> None:
-        with self._cv:
-            self.stopped = True
-            self._cv.notify_all()
 
 
 def build_processor(mode: str, model_path, frame_size):
@@ -129,70 +96,6 @@ def capture_loop(cap: CameraCapture, process, hub: FrameHub, rotate180: bool, jp
         hub.stop()
 
 
-PAGE = b"""<!doctype html><html><head><title>lock-on camera</title>
-<style>body{margin:0;background:#111;color:#ddd;font-family:sans-serif;text-align:center}
-img{max-width:100vw;max-height:95vh}</style></head>
-<body><img src="/stream.mjpg"></body></html>"""
-
-
-def make_handler(hub: FrameHub):
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def log_message(self, *a):  # quiet
-            pass
-
-        def do_GET(self):
-            if self.path in ("/", "/index.html"):
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.send_header("Content-Length", str(len(PAGE)))
-                self.end_headers()
-                self.wfile.write(PAGE)
-            elif self.path == "/snapshot.jpg":
-                jpeg = hub.latest()
-                self.send_response(200)
-                self.send_header("Content-Type", "image/jpeg")
-                self.send_header("Content-Length", str(len(jpeg)))
-                self.end_headers()
-                self.wfile.write(jpeg)
-            elif self.path == "/stream.mjpg":
-                self.send_response(200)
-                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-                self.end_headers()
-                seq = -1
-                try:
-                    while not hub.stopped:
-                        jpeg, seq = hub.wait_next(seq)
-                        if not jpeg:
-                            continue
-                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
-                                         + f"Content-Length: {len(jpeg)}\r\n\r\n".encode() + jpeg + b"\r\n")
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-            else:
-                self.send_error(404)
-
-    return Handler
-
-
-def local_ip() -> str:
-    try:
-        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2).stdout.split()
-        if out:
-            return out[0]
-    except Exception:
-        pass
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "<pi-ip>"
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mode", choices=["none", "fallback", "ml", "hybrid"], default="none")
@@ -213,12 +116,11 @@ def main() -> None:
                               args=(cap, process, hub, args.rotate180, args.quality), daemon=True)
     worker.start()
 
-    server = ThreadingHTTPServer(("0.0.0.0", args.http_port), make_handler(hub))
-    ip = local_ip()
-    print(f"\n  Open this on your laptop browser:  http://{ip}:{args.http_port}/\n"
-          f"  (mode={args.mode}; Ctrl+C here to stop)\n")
+    server = serve(hub, args.http_port)
+    print(f"  (mode={args.mode}; Ctrl+C here to stop)\n")
     try:
-        server.serve_forever()
+        while worker.is_alive():
+            worker.join(0.5)
     except KeyboardInterrupt:
         pass
     finally:

@@ -37,6 +37,33 @@ from lockon.vision.hybrid import HybridDetector  # noqa: E402
 from lockon.vision.ml_detector import MLDetector  # noqa: E402
 
 
+def _publish(hub, frame_rgb, result, roll, pitch, speed, fps) -> None:
+    """Draw the tracked box + the live command overlay and push a JPEG to
+    the browser stream."""
+    import cv2
+
+    from lockon.vision.types import DetectionSource
+
+    bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+    h, w = bgr.shape[:2]
+    cv2.drawMarker(bgr, (w // 2, h // 2), (90, 90, 90), cv2.MARKER_CROSS, 20, 1)  # boresight
+    det = result.detection
+    if det is not None:
+        color = (0, 255, 0) if det.source == DetectionSource.ML else (0, 165, 255)
+        x, y, bw, bh = int(det.x), int(det.y), int(det.w), int(det.h)
+        cv2.rectangle(bgr, (x, y), (x + bw, y + bh), color, 2)
+        cv2.putText(bgr, f"{det.source.value} {det.class_name} {det.confidence:.2f}",
+                    (x, max(14, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    boost = "  FLOOR-CLIMB" if result.altitude_boosting else ""
+    line1 = f"{result.state.value}   roll {roll:+d}  pitch {pitch:+d}{boost}"
+    line2 = f"V~{speed:.0f} m/s   {fps:4.1f} fps"
+    cv2.putText(bgr, line1, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.putText(bgr, line2, (8, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if ok:
+        hub.publish(buf.tobytes())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--msp-port", required=True)
@@ -51,6 +78,9 @@ def main() -> None:
     parser.add_argument("--wide", action="store_true", help="Camera Module 3 Wide lens")
     parser.add_argument("--mount-pitch-deg", type=float, default=0.0,
                         help="camera tilt above the nose (measure once on the airframe)")
+    parser.add_argument("--stream", action="store_true",
+                        help="serve the live feed + detection box to a laptop browser (headless demo)")
+    parser.add_argument("--http-port", type=int, default=8000)
     args = parser.parse_args()
 
     w, h = (int(v) for v in args.resolution.split("x"))
@@ -66,6 +96,12 @@ def main() -> None:
     guidance = InterceptGuidance(GuidanceParams(speed_mps=args.speed_mps))
     guard = AltitudeGuard(floor_ft=args.floor_ft)
 
+    hub = server = None
+    if args.stream:
+        from lockon.vision.mjpeg import FrameHub, serve  # noqa: E402
+        hub = FrameHub()
+        server = serve(hub, args.http_port)
+
     print("Bench integration running, PROPS OFF. Ctrl+C to stop.")
     controller = None
     try:
@@ -77,17 +113,29 @@ def main() -> None:
                 msp_client, link, hybrid, camera, guidance, guard,
                 lock_switch_index=args.switch_channel - 1,
             )
+            last_t = time.monotonic()
+            fps = 0.0
             for frame, frame_time in cap.timed_frames():
                 now = time.monotonic()
                 result = controller.step(frame, frame_time=frame_time, now=now)
                 state, roll, pitch = link.last_written
                 print(f"[t={now:9.2f}] {result.state.value:16s} sent state={state} roll={roll:+3d} "
                       f"pitch={pitch:+3d} V~{guidance.speed_mps:4.1f} floor_boost={result.altitude_boosting}")
+                if hub is not None:
+                    dt = now - last_t
+                    last_t = now
+                    if dt > 0:
+                        fps = 0.9 * fps + 0.1 / dt
+                    _publish(hub, frame, result, roll, pitch, guidance.speed_mps, fps)
     except KeyboardInterrupt:
         pass
     finally:
         if controller is not None:
             controller.shutdown()
+        if hub is not None:
+            hub.stop()
+        if server is not None:
+            server.shutdown()
         print("Stopped; control handed back.")
 
 

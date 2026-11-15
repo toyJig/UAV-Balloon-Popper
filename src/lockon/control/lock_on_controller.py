@@ -38,7 +38,7 @@ from ..msp.client import MSPClient
 from ..msp.inav_logic import STATE_ENGAGED, STATE_ENGAGED_LOCKED, STATE_OFF, InavLockOnLink
 from ..vision.camera_model import CameraModel
 from ..vision.hybrid import HybridDetector
-from ..vision.types import DetectionSource
+from ..vision.types import Detection, DetectionSource
 from .state_machine import LockState
 
 LOCK_SWITCH_INDEX = 6  # receiver-order index of the lock-on switch: CH7
@@ -61,6 +61,7 @@ class StepResult:
     attitude: Optional[Attitude] = None
     command: Optional[GuidanceCommand] = None
     altitude_ft: Optional[float] = None
+    detection: Optional[Detection] = None
 
 
 class LockOnController:
@@ -193,4 +194,5 @@ class LockOnController:
         guard, altitude_ft = self._guarded(cmd.pitch_deg, cmd.bank_deg)
 
         self._link.write(STATE_ENGAGED_LOCKED, roll_deg=guard.bank_deg, pitch_deg=guard.pitch_deg)
-        return StepResult(self._state, guard.boosting, guard.bank_deg, guard.pitch_deg, att, cmd, altitude_ft)
+        return StepResult(self._state, guard.boosting, guard.bank_deg, guard.pitch_deg, att, cmd, altitude_ft,
+                          detection=detection)
