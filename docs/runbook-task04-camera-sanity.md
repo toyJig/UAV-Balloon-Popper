@@ -28,6 +28,25 @@ You can watch the live feed in a browser on your laptop over the network.
    python3 tools/web_preview.py            # raw feed, no detector
    ```
 
+   If this fails with `No module named 'cv2'` (or `picamera2`), the venv
+   can't see the apt-installed libraries. Fix it once:
+
+   ```
+   sudo apt install -y python3-picamera2 python3-opencv python3-numpy
+   cat ~/lockon-venv/pyvenv.cfg | grep system-site   # want: = true
+   ```
+
+   If that line says `false` (or is missing), the venv was made without
+   system packages - recreate it:
+
+   ```
+   deactivate
+   rm -rf ~/lockon-venv
+   python3 -m venv --system-site-packages ~/lockon-venv
+   source ~/lockon-venv/bin/activate
+   pip install -r requirements-pi.txt
+   ```
+
    It prints a URL like `http://192.168.1.42:8000/`. Open that in your
    laptop browser - you'll see the live camera with an fps counter. This
    needs no monitor and no X server. Point the camera at a balloon and
@@ -82,13 +101,27 @@ Work through these in order:
 
    ```
    camera_auto_detect=0
-   dtoverlay=imx708
+   dtoverlay=imx708,cam0
    ```
 
-   Put the `dtoverlay` line after any `[all]` section, save, and reboot.
-   Then re-run `rpicam-hello --list-cameras`. (For a genuine Raspberry Pi
-   module, leave `camera_auto_detect=1` instead.)
+   On the Pi 5 you **must** name the port: `,cam0` is the CAM/DISP 0 (J3)
+   connector you used. A bare `dtoverlay=imx708` binds to the other port
+   and the camera stays invisible. Put the line after any `[all]` section,
+   save, and reboot, then re-run `rpicam-hello --list-cameras`. (For the
+   wide lens it would be `imx708_wide,cam0`; for a genuine Raspberry Pi
+   module, leave `camera_auto_detect=1` and no overlay.)
    Content was rephrased for compliance with licensing restrictions.
+
+   If it still shows nothing, check whether the driver even probed:
+
+   ```
+   dmesg | grep -i imx708
+   grep -iE 'camera_auto_detect|dtoverlay=imx' /boot/firmware/config.txt
+   ```
+
+   No `imx708` line in `dmesg` means the overlay/port/cable is wrong (try
+   `,cam1` once to tell a bad J3 port from a bad cable). A line that
+   mentions a probe *error* points at the ribbon seating.
 3. **Update first if still stuck:** `sudo apt update && sudo apt full-upgrade`
    then `sudo rpi-update` for the latest firmware, and reboot. Older Pi 5
    firmware shipped before some IMX708 support.

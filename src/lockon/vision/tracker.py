@@ -57,8 +57,23 @@ class BoxTracker:
         return self._backend is not None
 
     def start(self, frame: np.ndarray, bbox: BBox) -> None:
+        """Initialize a fresh track. OpenCV trackers reject float boxes,
+        boxes that run past the frame edge, and non-contiguous images, so
+        the box is rounded and clamped inside the frame and the frame is
+        made a contiguous uint8 array first. A box with no area after
+        clamping leaves the tracker inactive rather than raising."""
+        h, w = frame.shape[:2]
+        x0, y0, bw, bh = bbox
+        xi = max(0, min(int(round(x0)), w - 1))
+        yi = max(0, min(int(round(y0)), h - 1))
+        wi = max(1, min(int(round(bw)), w - xi))
+        hi = max(1, min(int(round(bh)), h - yi))
+        if wi < 1 or hi < 1:
+            self._backend = None
+            return
+        frame = np.ascontiguousarray(frame, dtype=np.uint8)
         self._backend = self._backend_factory()
-        self._backend.init(frame, bbox)
+        self._backend.init(frame, (xi, yi, wi, hi))
 
     def stop(self) -> None:
         self._backend = None
